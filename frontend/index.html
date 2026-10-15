@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GreenOps - Carbon-Aware Scheduler Demo</title>
+<style>
+  :root { --green:#1f7a4d; --light:#e8f3ec; --grey:#8a948e; --text:#1b2a22; --line:#cfd8d2; }
+  * { box-sizing: border-box; }
+  body { font-family: system-ui, Arial, sans-serif; margin: 0; color: var(--text); background: #f6f8f7; }
+  header { background: var(--green); color: #fff; padding: 14px 24px; display: flex; flex-wrap: wrap;
+           align-items: center; gap: 16px; justify-content: space-between; }
+  header h1 { font-size: 20px; margin: 0; }
+  main { max-width: 1150px; margin: 0 auto; padding: 16px 24px 40px; }
+  .card { background: #fff; border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px; margin-bottom: 16px; }
+  h2 { font-size: 15px; margin: 0 0 10px; color: var(--green); }
+  .row { display: flex; flex-wrap: wrap; gap: 10px; align-items: end; }
+  label { font-size: 12px; display: flex; flex-direction: column; gap: 3px; }
+  input, select, button { font: inherit; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; }
+  button { background: var(--green); color: #fff; border: 0; cursor: pointer; }
+  button.secondary { background: #fff; color: var(--green); border: 1px solid var(--green); }
+  button:disabled { opacity: .5; cursor: default; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { background: var(--light); }
+  .s-Scheduled { color: #8a6d00; } .s-Running { color: #0b5cad; } .s-Completed { color: var(--green); }
+  .s-Failed { color: #b3261e; } .s-Dispatching { color: #0b5cad; }
+  .why { color: var(--grey); font-size: 12px; max-width: 360px; }
+  .charts { display: grid; grid-template-columns: repeat(auto-fit, minmax(420px, 1fr)); gap: 16px; }
+  .big { font-size: 22px; font-weight: 600; color: var(--green); }
+  #msg { min-height: 18px; font-size: 13px; }
+  .err { color: #b3261e; } .note { color: var(--grey); font-size: 12px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>GreenOps - Carbon-Aware Scheduler</h1>
+  <div id="clock">Loading clock...</div>
+</header>
+<main>
+  <div class="card">
+    <h2>Demo controls</h2>
+    <div class="row">
+      <label>Clock speed
+        <select id="speed">
+          <option value="360">1 hour = 10 s</option>
+          <option value="720">1 hour = 5 s</option>
+          <option value="1800">1 hour = 2 s</option>
+          <option value="1">real time</option>
+        </select>
+      </label>
+      <button class="secondary" data-adv="1">+1 h</button>
+      <button class="secondary" data-adv="6">+6 h</button>
+      <button class="secondary" data-adv="24">+24 h</button>
+      <button id="samples">Load sample tasks</button>
+      <button id="reset" class="secondary">Reset demo</button>
+    </div>
+    <p class="note">The clock is sped up for the demo. Carbon data is a recorded real day, and energy is an estimate (power x time).
+       Carbon data: Electricity Maps (ODbL).</p>
+  </div>
+
+  <div class="card">
+    <h2>Submit a task (no region - the system chooses)</h2>
+    <div class="row">
+      <label>Name <input id="f-name" value="my-task"></label>
+      <label>Image
+        <select id="f-image"><option>demo-job:1</option></select>
+      </label>
+      <label>Duration (hours) <input id="f-dur" type="number" min="1" step="1" value="2" style="width:90px"></label>
+      <label>Deadline (hours from now) <input id="f-dl" type="number" min="1" step="1" value="24" style="width:110px"></label>
+      <label>Power (kW) <input id="f-pow" type="number" min="0.01" step="0.05" value="0.1" style="width:90px"></label>
+      <label style="flex-direction:row;align-items:center;gap:6px"><input id="f-gpu" type="checkbox"> needs GPU</label>
+      <button id="submit">Submit</button>
+    </div>
+    <div id="msg"></div>
+  </div>
+
+  <div class="card">
+    <h2>Result</h2>
+    <div class="row" style="gap:30px">
+      <div><div class="note">Carbon-aware total</div><div class="big" id="sum-aware">-</div></div>
+      <div><div class="note">Run-immediately total</div><div class="big" id="sum-naive" style="color:var(--grey)">-</div></div>
+      <div><div class="note">Saved</div><div class="big" id="sum-saved">-</div></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Tasks</h2>
+    <table>
+      <thead><tr><th>#</th><th>Name</th><th>Status</th><th>Azure region</th><th>Start (demo time)</th>
+        <th>Carbon-aware (g)</th><th>Naive (g)</th><th>Saved</th><th>Why this choice</th></tr></thead>
+      <tbody id="rows"></tbody>
+    </table>
+  </div>
+
+  <div class="charts">
+    <div class="card"><h2>Carbon per task: naive vs. carbon-aware</h2><canvas id="bar"></canvas></div>
+    <div class="card"><h2>Grid carbon intensity by region (chosen slots marked)</h2><canvas id="line"></canvas></div>
+  </div>
+  <p id="chartwarn" class="err"></p>
+</main>
+
+<script src="chart.umd.js"></script>
+<script>
+const API = new URLSearchParams(location.search).get("api") || "http://localhost:8001";
+const $ = id => document.getElementById(id);
+let carbon = {}, barChart = null, lineChart = null, lastTasks = [];
+
+async function api(path, method = "GET", body) {
+  const res = await fetch(API + path, {
+    method, headers: body ? { "Content-Type": "application/json" } : {},
+    body: body ? JSON.stringify(body) : undefined });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const d = data.detail;
+    const text = typeof d === "string" ? d
+      : Array.isArray(d) ? d.map(e => (e.loc || []).slice(-1)[0] + ": " + e.msg).join("; ")
+      : "Request failed (" + res.status + ")";
+    throw new Error(text);
+  }
+  return data;
+}
+function say(text, isErr) { $("msg").textContent = text || ""; $("msg").className = isErr ? "err" : ""; }
+const hhmm = iso => iso ? iso.slice(5, 10) + " " + iso.slice(11, 16) : "-";
+
+function cell(tr, text, cls) {
+  const td = document.createElement("td");
+  td.textContent = text;
+  if (cls) td.className = cls;
+  tr.appendChild(td);
+  return td;
+}
+
+function renderTable(tasks) {
+  const body = $("rows");
+  body.replaceChildren();
+  for (const t of tasks) {                       // textContent only: task names are user input
+    const tr = document.createElement("tr");
+    cell(tr, t.id);
+    cell(tr, t.name || "");
+    cell(tr, t.status, "s-" + t.status);
+    cell(tr, t.region_key + " (" + t.region + ")");
+    cell(tr, hhmm(t.start));
+    cell(tr, t.carbon_g.toFixed(1));
+    cell(tr, t.naive_carbon_g.toFixed(1));
+    cell(tr, t.saved_pct.toFixed(1) + " %");
+    const skipped = (t.skipped || []).map(s => s.region + " (" + s.reason + ")").join(", ");
+    cell(tr, t.reason + (skipped ? " Skipped: " + skipped + "." : ""), "why");
+    body.appendChild(tr);
+  }
+}
+
+function renderBar(tasks) {
+  if (!barChart) return;
+  barChart.data.labels = tasks.map(t => "#" + t.id + " " + (t.name || ""));
+  barChart.data.datasets[0].data = tasks.map(t => t.naive_carbon_g);
+  barChart.data.datasets[1].data = tasks.map(t => t.carbon_g);
+  barChart.update();
+}
+
+function renderLine(tasks) {
+  if (!lineChart) return;
+  const regions = Object.keys(carbon);
+  if (!regions.length) return;
+  const times = carbon[regions[0]].map(p => p[0]);
+  lineChart.data.labels = times.map(hhmm);
+  regions.forEach((r, i) => { lineChart.data.datasets[i].data = carbon[r].map(p => p[1]); });
+  const marks = times.map(() => null);           // one point per chosen slot
+  for (const t of tasks) {
+    const idx = times.indexOf(t.start);
+    const series = carbon[t.region];
+    if (idx >= 0 && series) marks[idx] = series[idx][1];
+  }
+  lineChart.data.datasets[regions.length].data = marks;
+  lineChart.update();
+}
+
+function renderSummary(s) {
+  $("sum-aware").textContent = s.tasks ? s.carbon_g.toFixed(1) + " g" : "-";
+  $("sum-naive").textContent = s.tasks ? s.naive_carbon_g.toFixed(1) + " g" : "-";
+  $("sum-saved").textContent = s.tasks ? s.saved_pct.toFixed(1) + " %" : "-";
+}
+
+async function refresh() {
+  try {
+    const [clock, tasks, summary] = await Promise.all([api("/clock"), api("/tasks"), api("/summary")]);
+    $("clock").textContent = "Demo time: " + clock.now.replace("T", " ").replace("Z", " UTC") +
+      "  |  1 hour = " + (3600 / clock.speed).toFixed(1) + " s";
+    $("speed").value = String(clock.speed);
+    lastTasks = tasks;
+    renderTable(tasks); renderBar(tasks); renderLine(tasks); renderSummary(summary);
+  } catch (e) {
+    $("clock").textContent = "Cannot reach the API at " + API;
+  }
+}
+
+async function loadCarbon() {
+  carbon = await api("/carbon");
+  const colors = ["#1f7a4d", "#d98c00", "#7b3fb5", "#0b5cad"];
+  if (lineChart) lineChart.destroy();
+  if (typeof Chart === "undefined") return;
+  const regions = Object.keys(carbon);
+  lineChart = new Chart($("line"), {
+    type: "line",
+    data: { labels: [], datasets: [
+      ...regions.map((r, i) => ({ label: r, data: [], borderColor: colors[i % 4], pointRadius: 0, tension: .25 })),
+      { label: "Chosen slot", data: [], showLine: false, pointRadius: 7, pointStyle: "triangle",
+        backgroundColor: "#b3261e", borderColor: "#b3261e" }] },
+    options: { responsive: true, scales: { y: { title: { display: true, text: "gCO2 / kWh" } } } } });
+  renderLine(lastTasks);
+}
+
+function startCharts() {
+  if (typeof Chart === "undefined") {
+    $("chartwarn").textContent = "Charts need chart.umd.js in the frontend folder (see the guide). The table still works.";
+    return;
+  }
+  barChart = new Chart($("bar"), {
+    type: "bar",
+    data: { labels: [], datasets: [
+      { label: "Run immediately (naive)", data: [], backgroundColor: "#9aa59f" },
+      { label: "Carbon-aware", data: [], backgroundColor: "#1f7a4d" }] },
+    options: { responsive: true, scales: { y: { beginAtZero: true, title: { display: true, text: "grams CO2 (estimate)" } } } } });
+}
+
+$("submit").onclick = async () => {
+  try {
+    say("");
+    const clock = await api("/clock");
+    const deadline = new Date(Date.parse(clock.now) + Number($("f-dl").value) * 3600e3).toISOString().slice(0, 19) + "Z";
+    const t = await api("/tasks", "POST", {
+      name: $("f-name").value, image: $("f-image").value,
+      duration_hours: Number($("f-dur").value), deadline,
+      power_kw: Number($("f-pow").value), needs_gpu: $("f-gpu").checked });
+    say("Task #" + t.id + ": " + t.reason);
+    refresh();
+  } catch (e) { say(e.message, true); }
+};
+$("samples").onclick = async () => {
+  try {
+    say("");
+    const out = await api("/demo/samples", "POST");
+    const bad = out.filter(x => x.error);
+    if (bad.length) say(bad.map(b => b.name + ": " + b.error).join(" | "), true);
+    refresh();
+  } catch (e) { say(e.message, true); }
+};
+$("reset").onclick = async () => {
+  try { say(""); await api("/reset", "POST"); await loadCarbon(); refresh(); }
+  catch (e) { say(e.message, true); }
+};
+$("speed").onchange = async () => {
+  try { await api("/clock/speed", "POST", { speed: Number($("speed").value) }); refresh(); }
+  catch (e) { say(e.message, true); }
+};
+document.querySelectorAll("[data-adv]").forEach(b => {
+  b.onclick = async () => {
+    try { await api("/clock/advance", "POST", { hours: Number(b.dataset.adv) }); refresh(); }
+    catch (e) { say(e.message, true); }
+  };
+});
+
+startCharts();
+loadCarbon().then(refresh).catch(() => refresh());
+setInterval(refresh, 1500);
+</script>
+</body>
+</html>

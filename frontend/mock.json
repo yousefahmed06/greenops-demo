@@ -1,0 +1,8 @@
+[
+  { "id": 1, "status": "Completed", "region": "sweden",
+    "region_key": "swedencentral", "carbon_g": 12.4,
+    "naive_carbon_g": 31.0, "saved_pct": 60.0 },
+  { "id": 2, "status": "Scheduled", "region": "germany",
+    "region_key": "germanywestcentral", "carbon_g": 20.0,
+    "naive_carbon_g": 24.0, "saved_pct": 16.7 }
+]

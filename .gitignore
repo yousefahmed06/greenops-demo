@@ -1,5 +1,6 @@
-__pycache__/
 .venv/
+__pycache__/
 node_modules/
-data/raw/
 .env
+*.db
+logs/

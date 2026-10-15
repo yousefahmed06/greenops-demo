@@ -1,0 +1,4 @@
+region_id,provider,region_key,region_name,geography,zones,gpu_available,grid_zone
+germany,Microsoft Azure,germanywestcentral,Germany West Central,Frankfurt area / Germany,Not listed here; verify,Yes,DE
+sweden,Microsoft Azure,swedencentral,Sweden Central,Gävle / Sweden,"1, 2, 3",Yes,SE
+poland,Microsoft Azure,polandcentral,Poland Central,Warsaw / Poland,"1, 2, 3",Verify,PL
