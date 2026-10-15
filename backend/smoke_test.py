@@ -5,20 +5,24 @@ It resets the demo, loads the 4 sample tasks, fast-forwards the clock, waits for
 container to finish and prints a result table. Exit code 0 means everything worked."""
 import json
 import math
+import os
 import sys
 import time
 import urllib.error
 import urllib.request
 from datetime import datetime, timezone
 
-API = sys.argv[1] if len(sys.argv) > 1 else "http://localhost:8001"
+ARGS = [a for a in sys.argv[1:] if not a.startswith("--")]
+API = ARGS[0] if ARGS else "http://localhost:8001"
+EXPECT_AGENTS = "--agents" in sys.argv          # also prove that the jobs ran via agents
+KEY = os.getenv("GREENOPS_KEY", "")             # the platform's DEMO_API_KEY, if one is set
 TIMEOUT = 600
 
 
 def call(path, method="GET", body=None):
     req = urllib.request.Request(API + path, method=method,
                                  data=json.dumps(body).encode() if body is not None else None,
-                                 headers={"Content-Type": "application/json"})
+                                 headers={"Content-Type": "application/json", "X-API-Key": KEY})
     try:
         with urllib.request.urlopen(req, timeout=15) as r:
             return json.loads(r.read())
@@ -81,6 +85,13 @@ failed = [t for t in tasks if t["status"] != "Completed"]
 for t in failed:
     print(f"\n--- log of failed task #{t['id']} ---\n" + call(f"/tasks/{t['id']}/log")["log"])
 check(not failed, "every container completed")
+if EXPECT_AGENTS:
+    hosts = set()
+    for t in tasks:
+        log = call(f"/tasks/{t['id']}/log")["log"]
+        check("agent host:" in log, f"task #{t['id']} ran through an agent ({log.splitlines()[0] if log else 'no log'})")
+        hosts.add(log.splitlines()[0].split("|")[0].strip())
+    print("     machines that ran jobs:", sorted(hosts))
 s = call("/summary")
 print(f"     total: {s['carbon_g']} g carbon-aware vs {s['naive_carbon_g']} g naive = {s['saved_pct']}% saved")
 check(s["saved_pct"] > 0, "carbon-aware total is lower than naive")

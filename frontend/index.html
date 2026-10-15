@@ -23,7 +23,7 @@
   table { width: 100%; border-collapse: collapse; font-size: 13px; }
   th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
   th { background: var(--light); }
-  .s-Scheduled { color: #8a6d00; } .s-Running { color: #0b5cad; } .s-Completed { color: var(--green); }
+  .s-Scheduled, .s-Queued { color: #8a6d00; } .s-Running { color: #0b5cad; } .s-Completed { color: var(--green); }
   .s-Failed { color: #b3261e; } .s-Dispatching { color: #0b5cad; }
   .why { color: var(--grey); font-size: 12px; max-width: 360px; }
   .charts { display: grid; grid-template-columns: repeat(auto-fit, minmax(420px, 1fr)); gap: 16px; }
@@ -35,7 +35,7 @@
 <body>
 <header>
   <h1>GreenOps - Carbon-Aware Scheduler</h1>
-  <div id="clock">Loading clock...</div>
+  <div><div id="clock">Loading clock...</div><div id="agents" style="font-size:12px;opacity:.9"></div></div>
 </header>
 <main>
   <div class="card">
@@ -102,13 +102,16 @@
 
 <script src="chart.umd.js"></script>
 <script>
-const API = new URLSearchParams(location.search).get("api") || "http://localhost:8001";
+const PARAMS = new URLSearchParams(location.search);
+const API = PARAMS.get("api") || "http://localhost:8001";
+const KEY = PARAMS.get("key") || "";          // the platform's DEMO_API_KEY, if it has one
 const $ = id => document.getElementById(id);
 let carbon = {}, barChart = null, lineChart = null, lastTasks = [];
 
 async function api(path, method = "GET", body) {
   const res = await fetch(API + path, {
-    method, headers: body ? { "Content-Type": "application/json" } : {},
+    method,
+    headers: Object.assign(body ? { "Content-Type": "application/json" } : {}, KEY ? { "X-API-Key": KEY } : {}),
     body: body ? JSON.stringify(body) : undefined });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
@@ -183,14 +186,20 @@ function renderSummary(s) {
 
 async function refresh() {
   try {
-    const [clock, tasks, summary] = await Promise.all([api("/clock"), api("/tasks"), api("/summary")]);
+    const [clock, tasks, summary, agents] = await Promise.all(
+      [api("/clock"), api("/tasks"), api("/summary"), api("/agents")]);
     $("clock").textContent = "Demo time: " + clock.now.replace("T", " ").replace("Z", " UTC") +
       "  |  1 hour = " + (3600 / clock.speed).toFixed(1) + " s";
     $("speed").value = String(clock.speed);
+    $("agents").textContent = agents.length
+      ? "Agents: " + agents.map(a => a.region + (a.online ? " online" : " offline")).join(" | ")
+      : "Agents: none enrolled (jobs run on the machine hosting the platform)";
     lastTasks = tasks;
     renderTable(tasks); renderBar(tasks); renderLine(tasks); renderSummary(summary);
   } catch (e) {
-    $("clock").textContent = "Cannot reach the API at " + API;
+    $("clock").textContent = /key/i.test(e.message)
+      ? "API key missing or wrong - open this page with ?key=YOUR_KEY"
+      : "Cannot reach the API at " + API;
   }
 }
 
