@@ -84,6 +84,7 @@ class DockerRunner:
             "--label", f"region={job['region_key']}",
             "--cpus", str(self.cpus), "--memory", str(self.memory),
             "-e", f"WORK_SECONDS={job['work_seconds']}",
+            "-e", f"REGION={job['region_key']}",
             job["image"]]
 
     def start(self, job):
@@ -151,7 +152,8 @@ class KubernetesRunner:
                         "restartPolicy": "Never",
                         "containers": [{
                             "name": "job", "image": job["image"], "imagePullPolicy": "IfNotPresent",
-                            "env": [{"name": "WORK_SECONDS", "value": str(job["work_seconds"])}],
+                            "env": [{"name": "WORK_SECONDS", "value": str(job["work_seconds"])},
+                                    {"name": "REGION", "value": str(job["region_key"])}],
                             "resources": {"requests": {"cpu": str(cpus), "memory": memory},
                                           "limits": {"cpu": str(cpus), "memory": memory}}}]}}}}
 

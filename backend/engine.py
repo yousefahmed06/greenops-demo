@@ -16,12 +16,29 @@ def load_data(carbon_path, regions_path):
     return carbon, regions
 
 
-def rebase(carbon, now):
-    """Shift the recorded timestamps so the first row is 'now'."""
-    shift = now - carbon["timestamp_utc"].min()
-    out = carbon.copy()
-    out["timestamp_utc"] = out["timestamp_utc"] + shift
-    return out
+def rebase(carbon, now, cycles=1):
+    """Shift the recorded timestamps so the first row is 'now'.
+
+    The recorded data is short (e.g. 48 h). With cycles > 1 it is repeated back to back,
+    so the demo clock can run (or be fast-forwarded) far past the first day without
+    running out of carbon data.
+    """
+    first = carbon["timestamp_utc"].min()
+    period = carbon["timestamp_utc"].max() - first + pd.Timedelta(hours=1)
+    shift = now - first
+    parts = []
+    for i in range(max(1, int(cycles))):
+        part = carbon.copy()
+        part["timestamp_utc"] = part["timestamp_utc"] + shift + period * i
+        parts.append(part)
+    return pd.concat(parts, ignore_index=True)
+
+
+def cycles_needed(carbon, anchor, until):
+    """How many repeats of the recorded data are needed to cover time up to `until`."""
+    first = carbon["timestamp_utc"].min()
+    period = carbon["timestamp_utc"].max() - first + pd.Timedelta(hours=1)
+    return max(1, int(math.ceil((until - anchor) / period)))
 
 
 def build_series(carbon):
@@ -69,7 +86,9 @@ def choose(task, series_by_region, regions, now,
     best, options = None, 0
     for region in ok:
         start = now
-        while start <= latest_start:
+        # never scan past the end of the data: a far-away deadline must not make this loop huge
+        last_start = min(latest_start, series_by_region[region].index.max())
+        while start <= last_start:
             grams = window_grams(series_by_region[region], start, hours, power)
             if grams is not None:
                 options += 1

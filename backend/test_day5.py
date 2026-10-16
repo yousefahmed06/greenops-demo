@@ -26,7 +26,7 @@ dispatcher.start_container = lambda cmd, log: subprocess.Popen(
 with TestClient(main.app) as c:
     # carbon data for the chart
     carbon = c.get("/carbon").json()
-    assert set(carbon) == {"sweden", "germany", "poland"} and all(len(v) == 48 for v in carbon.values())
+    assert set(carbon) == {"sweden", "germany", "poland"} and all(len(v) >= 48 for v in carbon.values())
 
     # the four sample tasks
     out = c.post("/demo/samples").json()

@@ -12,6 +12,7 @@ def build_command(image, region_key, task_id, work_seconds):
             "--label", f"region={region_key}",
             "--label", f"task_id={task_id}",
             "-e", f"WORK_SECONDS={work_seconds}",
+            "-e", f"REGION={region_key}",
             image]
 
 

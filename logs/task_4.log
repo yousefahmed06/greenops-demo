@@ -1,3 +1,0 @@
-$ docker run --rm --name greenops-task-4-1792022727 --label region=swedencentral --label task_id=4 -e WORK_SECONDS=120 demo-job:1
-Job started, region label: unknown
-Job done

@@ -9,6 +9,9 @@ import store
 
 
 ONLINE_WINDOW = float(os.getenv("AGENT_ONLINE_SECONDS", "30"))   # heartbeat newer than this = online
+# 1 = a region without an agent never runs jobs on the platform host: they wait instead.
+# 0 (default) = demo mode: with no agent for a region, run the job locally in a container.
+STRICT_PLACEMENT = os.getenv("STRICT_PLACEMENT", "0") == "1"
 LOST_AFTER = float(os.getenv("AGENT_LOST_SECONDS", "120"))      # silent longer than this = jobs lost
 
 
@@ -50,6 +53,8 @@ class Scheduler:
                 if pd.Timestamp(row["decision"]["start"]) <= now:
                     agent = store.agent_status(self.db_path, row["decision"]["region"], real, ONLINE_WINDOW)
                     if agent is None:                              # no agent for this region
+                        if STRICT_PLACEMENT:
+                            continue                               # never run in the wrong place
                         if store.claim(self.db_path, row["id"]):   # mark Dispatching first
                             self._start(row, now)
                     elif agent["online"]:

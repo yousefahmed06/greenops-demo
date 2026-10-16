@@ -80,7 +80,7 @@
     <div class="row" style="gap:30px">
       <div><div class="note">Carbon-aware total</div><div class="big" id="sum-aware">-</div></div>
       <div><div class="note">Run-immediately total</div><div class="big" id="sum-naive" style="color:var(--grey)">-</div></div>
-      <div><div class="note">Saved</div><div class="big" id="sum-saved">-</div></div>
+      <div><div class="note">Saved (planned: includes tasks not finished yet)</div><div class="big" id="sum-saved">-</div></div>
     </div>
   </div>
 
@@ -104,7 +104,19 @@
 <script>
 const PARAMS = new URLSearchParams(location.search);
 const API = PARAMS.get("api") || "http://localhost:8001";
-const KEY = PARAMS.get("key") || "";          // the platform's DEMO_API_KEY, if it has one
+// The platform's DEMO_API_KEY, if it has one. Taken from ?key=... once, kept for this tab only,
+// and removed from the address bar so it does not stay in history or get copied around.
+let KEY = PARAMS.get("key") || "";
+try {
+  if (KEY) {
+    sessionStorage.setItem("greenops_key", KEY);
+    PARAMS.delete("key");
+    const q = PARAMS.toString();
+    history.replaceState(null, "", location.pathname + (q ? "?" + q : "") + location.hash);
+  } else {
+    KEY = sessionStorage.getItem("greenops_key") || "";
+  }
+} catch (e) { /* storage blocked: the key then only works for the first load */ }
 const $ = id => document.getElementById(id);
 let carbon = {}, barChart = null, lineChart = null, lastTasks = [];
 

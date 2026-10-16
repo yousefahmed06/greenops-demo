@@ -5,9 +5,8 @@ from pathlib import Path
 
 import pandas as pd
 
-FILES = {"sweden":  r"D:\greenops-demo\data\raw\SE.csv",
-         "germany": r"D:\greenops-demo\data\raw\DE.csv",
-         "poland":  r"D:\greenops-demo\data\raw\PL.csv"}
+FILES = {"verginia":  r"D:\greenops-demo\data\raw\VIR.csv",
+         "oregon": r"D:\greenops-demo\data\raw\ORG.csv",}
 
 START = pd.Timestamp("2025-06-14", tz="UTC")      # the files cover 2025
 END = pd.Timestamp("2025-06-16", tz="UTC")        # exclusive: 48 hours

@@ -1,0 +1,25 @@
+name: Tests
+on:
+  push:
+  pull_request:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r backend/requirements.txt
+      - name: Backend tests
+        working-directory: backend
+        run: |
+          python test_day2.py
+          python test_day3.py
+          python test_day4.py
+          python test_day5.py
+          python test_agent.py
+          python test_fixes.py
+      - name: Agent tests
+        working-directory: agent
+        run: python test_agent_unit.py

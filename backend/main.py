@@ -17,14 +17,15 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
+import compare
 import engine
 import store
 from clock import DemoClock
 from scheduler import ONLINE_WINDOW, Scheduler, work_seconds
 
 BASE = Path(__file__).resolve().parent.parent
-CARBON_PATH = os.getenv("CARBON_PATH", str(BASE / "data" / "carbon.csv"))
-REGIONS_PATH = os.getenv("REGIONS_PATH", str(BASE / "data" / "regions.csv"))
+CARBON_PATH = os.getenv("CARBON_PATH", str(BASE / "data" / "carbon_aws.csv"))
+REGIONS_PATH = os.getenv("REGIONS_PATH", str(BASE / "data" / "regions_aws.csv"))
 DB_PATH = os.getenv("DB_PATH", str(BASE / "greenops.db"))
 LOG_DIR = os.getenv("LOG_DIR", str(BASE / "logs"))
 DEFAULT_REGION = os.getenv("DEFAULT_REGION", "germany")
@@ -32,6 +33,8 @@ ALLOWED_IMAGES = [i.strip() for i in os.getenv("ALLOWED_IMAGES", "demo-job:1").s
 API_KEY = os.getenv("DEMO_API_KEY", "")        # empty = no key needed (local use only!)
 ADMIN_KEY = os.getenv("ADMIN_KEY", "")         # empty = agent enrollment is disabled
 ORIGINS = [o.strip() for o in os.getenv("ALLOWED_ORIGINS", "*").split(",")]
+MAX_DEADLINE_HOURS = float(os.getenv("MAX_DEADLINE_HOURS", "168"))   # reject deadlines further away than this
+HORIZON_HOURS = MAX_DEADLINE_HOURS + 24     # carbon data is always kept this far ahead of the demo clock
 LEASE_SECONDS = 60          # an agent must confirm a task within this time
 TRACKING_GRACE = 15         # seconds before a Running task missing from a heartbeat is failed
 
@@ -45,10 +48,23 @@ def get_now():
     return clock.now().floor("h")
 
 
-def rebuild_series():
-    """Shift the recorded carbon data so its first row is the clock's current hour."""
-    carbon = engine.rebase(state["carbon_raw"], get_now())
+def rebuild_series(new_anchor=True):
+    """Shift the recorded carbon data so its first row is the clock's current hour.
+    The data is repeated as often as needed to stay HORIZON_HOURS ahead of the clock."""
+    if new_anchor or "anchor" not in state:
+        state["anchor"] = get_now()
+    until = get_now() + pd.Timedelta(hours=HORIZON_HOURS)
+    cycles = engine.cycles_needed(state["carbon_raw"], state["anchor"], until)
+    carbon = engine.rebase(state["carbon_raw"], state["anchor"], cycles)
     state["series"] = engine.build_series(carbon)
+    state["cycles"] = cycles
+
+
+def ensure_series():
+    """Extend the carbon data if the (fast-forwarded) clock has caught up with its end."""
+    until = get_now() + pd.Timedelta(hours=HORIZON_HOURS)
+    if engine.cycles_needed(state["carbon_raw"], state["anchor"], until) > state["cycles"]:
+        rebuild_series(new_anchor=False)
 
 
 @asynccontextmanager
@@ -58,6 +74,9 @@ async def lifespan(app):
     rebuild_series()
     store.init(DB_PATH)
     store.fail_orphans(DB_PATH)
+    if not API_KEY:
+        print("WARNING: DEMO_API_KEY is empty - anyone who can reach this API can reset it and "
+              "move the clock. Fine on localhost; set a key before exposing it.")
     if os.getenv("SCHEDULER_AUTOSTART", "1") == "1":
         scheduler.start()
     yield
@@ -152,6 +171,10 @@ def submit(task: TaskIn):
     if task.image not in ALLOWED_IMAGES:
         raise HTTPException(status_code=422,
                             detail=f"Image not allowed in the demo. Allowed: {ALLOWED_IMAGES}")
+    ensure_series()
+    if to_utc(task.deadline) > get_now() + pd.Timedelta(hours=MAX_DEADLINE_HOURS):
+        raise HTTPException(status_code=422,
+                            detail=f"Deadline too far away (maximum {MAX_DEADLINE_HOURS:g} hours from now)")
     try:
         decision = engine.choose(
             {"duration_hours": task.duration_hours, "deadline": to_utc(task.deadline),
@@ -173,6 +196,7 @@ def create_task(task: TaskIn):
 @app.get("/carbon")
 def carbon_series():
     """Carbon data for the charts: {region: [[time, gCO2/kWh], ...]} on the demo clock."""
+    ensure_series()
     return {region: [[ts.strftime("%Y-%m-%dT%H:%M:%SZ"), float(v)] for ts, v in s.items()]
             for region, s in state["series"].items()}
 
@@ -183,8 +207,11 @@ def summary():
     aware = sum(r["decision"]["carbon_g"] for r in rows)
     naive = sum(r["decision"]["naive_carbon_g"] for r in rows)
     saved = round((naive - aware) / naive * 100, 1) if naive > 0 else 0.0
+    # "tasks / carbon_g / ..." are PLANNED numbers (they include tasks that have not run yet);
+    # "completed" only counts tasks that really finished.
     return {"tasks": len(rows), "carbon_g": round(aware, 1),
-            "naive_carbon_g": round(naive, 1), "saved_pct": saved}
+            "naive_carbon_g": round(naive, 1), "saved_pct": saved,
+            "completed": compare.summarize([store.public(r) for r in rows])}
 
 
 SAMPLES = [  # (name, duration h, deadline in h from now, power kW, needs GPU)
